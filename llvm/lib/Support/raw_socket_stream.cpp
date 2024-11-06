@@ -66,7 +66,9 @@ static sockaddr_un setSocketAddr(StringRef SocketPath) {
   struct sockaddr_un Addr;
   memset(&Addr, 0, sizeof(Addr));
   Addr.sun_family = AF_UNIX;
+#if !LLVM_ON_WASI
   strncpy(Addr.sun_path, SocketPath.str().c_str(), sizeof(Addr.sun_path) - 1);
+#endif
   return Addr;
 }
 
@@ -75,7 +77,11 @@ static Expected<int> getSocketFD(StringRef SocketPath) {
   SOCKET Socket = socket(AF_UNIX, SOCK_STREAM, 0);
   if (Socket == INVALID_SOCKET) {
 #else
+#if LLVM_ON_WASI
+  int Socket = -1;
+#else
   int Socket = socket(AF_UNIX, SOCK_STREAM, 0);
+#endif
   if (Socket == -1) {
 #endif // _WIN32
     return llvm::make_error<StringError>(getLastSocketErrorCode(),
@@ -83,9 +89,11 @@ static Expected<int> getSocketFD(StringRef SocketPath) {
   }
 
   struct sockaddr_un Addr = setSocketAddr(SocketPath);
+#if !LLVM_ON_WASI
   if (::connect(Socket, (struct sockaddr *)&Addr, sizeof(Addr)) == -1)
     return llvm::make_error<StringError>(getLastSocketErrorCode(),
                                          "Connect socket failed");
+#endif      
 
 #ifdef _WIN32
   return _open_osfhandle(Socket, 0);
@@ -142,30 +150,38 @@ Expected<ListeningSocket> ListeningSocket::createUnix(StringRef SocketPath,
   SOCKET Socket = socket(AF_UNIX, SOCK_STREAM, 0);
   if (Socket == INVALID_SOCKET)
 #else
+#if LLVM_ON_WASI
+  int Socket = -1;
+#else
   int Socket = socket(AF_UNIX, SOCK_STREAM, 0);
+#endif
   if (Socket == -1)
 #endif
     return llvm::make_error<StringError>(getLastSocketErrorCode(),
                                          "socket create failed");
 
   struct sockaddr_un Addr = setSocketAddr(SocketPath);
+#if !LLVM_ON_WASI
   if (::bind(Socket, (struct sockaddr *)&Addr, sizeof(Addr)) == -1) {
     // Grab error code from call to ::bind before calling ::close
     std::error_code EC = getLastSocketErrorCode();
     ::close(Socket);
     return llvm::make_error<StringError>(EC, "Bind error");
   }
+#endif
 
   // Mark socket as passive so incoming connections can be accepted
+#if !LLVM_ON_WASI
   if (::listen(Socket, MaxBacklog) == -1)
     return llvm::make_error<StringError>(getLastSocketErrorCode(),
                                          "Listen error");
+#endif
 
   int PipeFD[2];
 #ifdef _WIN32
   // Reserve 1 byte for the pipe and use default textmode
   if (::_pipe(PipeFD, 1, 0) == -1)
-#else
+#elif !LLVM_ON_WASI
   if (::pipe(PipeFD) == -1)
 #endif // _WIN32
     return llvm::make_error<StringError>(getLastSocketErrorCode(),

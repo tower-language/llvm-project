@@ -37,6 +37,9 @@ extern "C" void __clear_cache(void *, void *);
 #endif
 
 static int getPosixProtectionFlags(unsigned Flags) {
+#if LLVM_ON_WASI
+  return 0;
+#else
   switch (Flags & llvm::sys::Memory::MF_RWE_MASK) {
   case llvm::sys::Memory::MF_READ:
     return PROT_READ;
@@ -65,6 +68,7 @@ static int getPosixProtectionFlags(unsigned Flags) {
   }
   // Provide a default return value as required by some compilers.
   return PROT_NONE;
+#endif
 }
 
 namespace llvm {
@@ -73,6 +77,10 @@ namespace sys {
 MemoryBlock Memory::allocateMappedMemory(size_t NumBytes,
                                          const MemoryBlock *const NearBlock,
                                          unsigned PFlags, std::error_code &EC) {
+#if LLVM_ON_WASI
+  EC = std::error_code(EINVAL, std::generic_category());
+  return MemoryBlock();
+#else
   EC = std::error_code();
   if (NumBytes == 0)
     return MemoryBlock();
@@ -146,9 +154,13 @@ MemoryBlock Memory::allocateMappedMemory(size_t NumBytes,
   }
 
   return Result;
+#endif
 }
 
 std::error_code Memory::releaseMappedMemory(MemoryBlock &M) {
+#if LLVM_ON_WASI
+  return std::error_code(EINVAL, std::generic_category());
+#else
   if (M.Address == nullptr || M.AllocatedSize == 0)
     return std::error_code();
 
@@ -159,10 +171,14 @@ std::error_code Memory::releaseMappedMemory(MemoryBlock &M) {
   M.AllocatedSize = 0;
 
   return std::error_code();
+#endif
 }
 
 std::error_code Memory::protectMappedMemory(const MemoryBlock &M,
                                             unsigned Flags) {
+#if LLVM_ON_WASI
+  return std::error_code(EINVAL, std::generic_category());
+#else
   static const Align PageSize = Align(Process::getPageSizeEstimate());
   if (M.Address == nullptr || M.AllocatedSize == 0)
     return std::error_code();
@@ -202,6 +218,7 @@ std::error_code Memory::protectMappedMemory(const MemoryBlock &M,
     Memory::InvalidateInstructionCache(M.Address, M.AllocatedSize);
 
   return std::error_code();
+#endif
 }
 
 /// InvalidateInstructionCache - Before the JIT can run a block of code

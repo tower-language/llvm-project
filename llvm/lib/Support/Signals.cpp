@@ -274,7 +274,28 @@ static bool printMarkupStackTrace(StringRef Argv0, void **StackTrace, int Depth,
 
 // Include the platform-specific parts of this class.
 #ifdef LLVM_ON_UNIX
+#if LLVM_ON_WASI
+void llvm::sys::AddSignalHandler(sys::SignalHandlerCallback FnPtr, void *Cookie) {}
+void llvm::sys::RunInterruptHandlers() {}
+void llvm::sys::DefaultOneShotPipeSignalHandler() {}
+void llvm::sys::SetOneShotPipeSignalFunction(void (*Handler)()) {}
+void llvm::sys::PrintStackTraceOnErrorSignal(StringRef Argv0, bool DisableCrashReporting) {}
+bool llvm::sys::RemoveFileOnSignal(StringRef Filename, std::string *ErrMsg) {return false;}
+void llvm::sys::DontRemoveFileOnSignal(StringRef Filename) {}
+void llvm::sys::DisableSystemDialogsOnCrash() {}
+void llvm::sys::CleanupOnSignal(uintptr_t Context) {}
+void llvm::sys::unregisterHandlers() {}
+void llvm::sys::SetInfoSignalFunction(void (*Handler)()) {}
+static bool findModulesAndOffsets(void **StackTrace, int Depth,
+                                  const char **Modules, intptr_t *Offsets,
+                                  const char *MainExecutableName,
+                                  StringSaver &StrPool) {return false;}
+static bool printMarkupContext(llvm::raw_ostream &OS,
+                               const char *MainExecutableName) {return false;}
+void llvm::sys::SetInterruptFunction(void (*IF)()) {}
+#else
 #include "Unix/Signals.inc"
+#endif
 #endif
 #ifdef _WIN32
 #include "Windows/Signals.inc"

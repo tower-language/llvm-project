@@ -13,6 +13,7 @@
 #include "llvm/Support/WindowsError.h"
 #include <algorithm>
 
+#if !LLVM_ON_WASI
 #if defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -464,3 +465,4 @@ SharedMemoryMapper::~SharedMemoryMapper() {
 } // namespace orc
 
 } // namespace llvm
+#endif

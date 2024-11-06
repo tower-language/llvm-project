@@ -73,7 +73,11 @@ getRUsageTimes() {
 Process::Pid Process::getProcessId() {
   static_assert(sizeof(Pid) >= sizeof(pid_t),
                 "Process::Pid should be big enough to store pid_t");
+#if LLVM_ON_WASI
+  return Pid();
+#else
   return Pid(::getpid());
+#endif
 }
 
 // On Cygwin, getpagesize() returns 64k(AllocationGranularity) and
@@ -253,8 +257,10 @@ std::error_code Process::FixupStandardFileDescriptors() {
 
     if (NullFD == StandardFD)
       FDC.keepOpen();
+#if !LLVM_ON_WASI
     else if (dup2(NullFD, StandardFD) < 0)
       return errnoAsErrorCode();
+#endif
   }
   return std::error_code();
 }
@@ -262,16 +268,20 @@ std::error_code Process::FixupStandardFileDescriptors() {
 std::error_code Process::SafelyCloseFileDescriptor(int FD) {
   // Create a signal set filled with *all* signals.
   sigset_t FullSet, SavedSet;
+#if !LLVM_ON_WASI
   if (sigfillset(&FullSet) < 0 || sigfillset(&SavedSet) < 0)
     return errnoAsErrorCode();
+#endif
 
     // Atomically swap our current signal mask with a full mask.
+#if !LLVM_ON_WASI
 #if LLVM_ENABLE_THREADS
   if (int EC = pthread_sigmask(SIG_SETMASK, &FullSet, &SavedSet))
     return std::error_code(EC, std::generic_category());
 #else
   if (sigprocmask(SIG_SETMASK, &FullSet, &SavedSet) < 0)
     return errnoAsErrorCode();
+#endif
 #endif
   // Attempt to close the file descriptor.
   // We need to save the error, if one occurs, because our subsequent call to
@@ -281,11 +291,13 @@ std::error_code Process::SafelyCloseFileDescriptor(int FD) {
     ErrnoFromClose = errno;
   // Restore the signal mask back to what we saved earlier.
   int EC = 0;
+#if !LLVM_ON_WASI
 #if LLVM_ENABLE_THREADS
   EC = pthread_sigmask(SIG_SETMASK, &SavedSet, nullptr);
 #else
   if (sigprocmask(SIG_SETMASK, &SavedSet, nullptr) < 0)
     EC = errno;
+#endif
 #endif
   // The error code from close takes precedence over the one from
   // pthread_sigmask.
@@ -415,7 +427,11 @@ static unsigned GetRandomNumberSeed() {
   // Otherwise, swizzle the current time and the process ID to form a reasonable
   // seed.
   const auto Now = std::chrono::high_resolution_clock::now();
+#if LLVM_ON_WASI
+  return Now.time_since_epoch().count();
+#else
   return hash_combine(Now.time_since_epoch().count(), ::getpid());
+#endif
 }
 #endif
 

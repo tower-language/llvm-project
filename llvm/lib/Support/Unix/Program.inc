@@ -115,11 +115,13 @@ static bool RedirectIO(std::optional<StringRef> Path, int FD, std::string *ErrMs
   }
 
   // Install it as the requested FD
+#if !LLVM_ON_WASI
   if (dup2(InFD, FD) == -1) {
     MakeErrMsg(ErrMsg, "Cannot dup2");
     close(InFD);
     return true;
   }
+#endif
   close(InFD); // Close the original FD
   return false;
 }
@@ -178,6 +180,11 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
                     ArrayRef<std::optional<StringRef>> Redirects,
                     unsigned MemoryLimit, std::string *ErrMsg,
                     BitVector *AffinityMask, bool DetachProcess) {
+#if LLVM_ON_WASI
+  if (ErrMsg)
+    *ErrMsg = std::string("not implemented");
+  return false;
+#else
   if (!llvm::sys::fs::exists(Program)) {
     if (ErrMsg)
       *ErrMsg = std::string("Executable \"") + Program.str() +
@@ -347,6 +354,7 @@ static bool Execute(ProcessInfo &PI, StringRef Program,
   PI.Process = child;
 
   return true;
+#endif
 }
 
 namespace llvm {
@@ -354,7 +362,7 @@ namespace sys {
 
 #if defined(_AIX)
 static pid_t(wait4)(pid_t pid, int *status, int options, struct rusage *usage);
-#elif !defined(__Fuchsia__)
+#elif !defined(__Fuchsia__) && !LLVM_ON_WASI
 using ::wait4;
 #endif
 
@@ -400,6 +408,13 @@ ProcessInfo llvm::sys::Wait(const ProcessInfo &PI,
                             std::string *ErrMsg,
                             std::optional<ProcessStatistics> *ProcStat,
                             bool Polling) {
+#if LLVM_ON_WASI
+  ProcessInfo WaitResult;
+  if (ErrMsg)
+    *ErrMsg = std::string("not implemented");
+  WaitResult.ReturnCode = -1;
+  return WaitResult;
+#else
   struct sigaction Act, Old;
   assert(PI.Pid && "invalid pid to wait on, process not started?");
 
@@ -517,6 +532,7 @@ ProcessInfo llvm::sys::Wait(const ProcessInfo &PI,
     WaitResult.ReturnCode = -2;
   }
   return WaitResult;
+#endif
 }
 
 std::error_code llvm::sys::ChangeStdinMode(fs::OpenFlags Flags) {

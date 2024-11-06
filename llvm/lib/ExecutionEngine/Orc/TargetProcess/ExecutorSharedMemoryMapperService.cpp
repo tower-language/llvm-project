@@ -12,6 +12,9 @@
 #include "llvm/Support/Process.h"
 #include "llvm/Support/WindowsError.h"
 #include <sstream>
+#if LLVM_ON_WASI
+#undef LLVM_ON_UNIX
+#endif
 
 #if defined(LLVM_ON_UNIX)
 #include <errno.h>

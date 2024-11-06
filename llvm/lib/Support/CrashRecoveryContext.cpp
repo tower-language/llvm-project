@@ -8,6 +8,7 @@
 
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Config/llvm-config.h"
+#if !LLVM_ON_WASI
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ExitCodes.h"
 #include "llvm/Support/Signals.h"
@@ -523,3 +524,4 @@ bool CrashRecoveryContext::RunSafelyOnThread(function_ref<void()> Fn,
     CRC->setSwitchedThread();
   return Info.Result;
 }
+#endif

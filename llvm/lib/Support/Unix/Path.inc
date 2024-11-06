@@ -334,6 +334,8 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
   char link_path[PATH_MAX];
   if (realpath(DLInfo.dli_fname, link_path))
     return link_path;
+#elif LLVM_ON_WASI
+  return argv0;
 #else
 #error GetMainExecutable is not implemented on this host yet.
 #endif
@@ -555,6 +557,8 @@ static bool is_local_impl(struct STATVFS &Vfs) {
   // The file system can have an arbitrary structure on z/OS; must go with the
   // conservative answer.
   return false;
+#elif LLVM_ON_WASI
+  return false;
 #else
   return !!(STATVFS_F_FLAG(Vfs) & MNT_LOCAL);
 #endif
@@ -673,6 +677,7 @@ static void expandTildeExpr(SmallVectorImpl<char> &Path) {
     return;
   }
 
+#if !LLVM_ON_WASI
   // This is a string of the form ~username/, look up this user's entry in the
   // password database.
   std::unique_ptr<char[]> Buf;
@@ -694,6 +699,7 @@ static void expandTildeExpr(SmallVectorImpl<char> &Path) {
   Path.clear();
   Path.append(Entry->pw_dir, Entry->pw_dir + strlen(Entry->pw_dir));
   llvm::sys::path::append(Path, Storage);
+#endif
 }
 
 void expand_tilde(const Twine &path, SmallVectorImpl<char> &dest) {
@@ -770,11 +776,15 @@ std::error_code status(int FD, file_status &Result) {
 }
 
 unsigned getUmask() {
+#if LLVM_ON_WASI
+  return 0;
+#else
   // Chose arbitary new mask and reset the umask to the old mask.
   // umask(2) never fails so ignore the return of the second call.
   unsigned Mask = ::umask(0);
   (void)::umask(Mask);
   return Mask;
+#endif
 }
 
 std::error_code setPermissions(const Twine &Path, perms Permissions) {
@@ -829,6 +839,9 @@ std::error_code setLastAccessAndModificationTime(int FD, TimePoint<> AccessTime,
 
 std::error_code mapped_file_region::init(int FD, uint64_t Offset,
                                          mapmode Mode) {
+#if LLVM_ON_WASI
+  return std::error_code(EINVAL, std::generic_category());
+#else
   assert(Size != 0);
 
   int flags = (Mode == readwrite) ? MAP_SHARED : MAP_PRIVATE;
@@ -860,6 +873,7 @@ std::error_code mapped_file_region::init(int FD, uint64_t Offset,
   if (Mapping == MAP_FAILED)
     return errnoAsErrorCode();
   return std::error_code();
+#endif
 }
 
 mapped_file_region::mapped_file_region(int fd, mapmode mode, size_t length,
@@ -872,11 +886,14 @@ mapped_file_region::mapped_file_region(int fd, mapmode mode, size_t length,
 }
 
 void mapped_file_region::unmapImpl() {
+#if !LLVM_ON_WASI
   if (Mapping)
     ::munmap(Mapping, Size);
+#endif
 }
 
 void mapped_file_region::dontNeedImpl() {
+#if !LLVM_ON_WASI
   assert(Mode == mapped_file_region::readonly);
   if (!Mapping)
     return;
@@ -886,6 +903,7 @@ void mapped_file_region::dontNeedImpl() {
   ::posix_madvise(Mapping, Size, POSIX_MADV_DONTNEED);
 #else
   ::madvise(Mapping, Size, MADV_DONTNEED);
+#endif
 #endif
 }
 
@@ -1224,6 +1242,7 @@ Expected<size_t> readNativeFileSlice(file_t FD, MutableArrayRef<char> Buf,
 }
 
 std::error_code tryLockFile(int FD, std::chrono::milliseconds Timeout) {
+#if !LLVM_ON_WASI
   auto Start = std::chrono::steady_clock::now();
   auto End = Start + Timeout;
   do {
@@ -1240,10 +1259,14 @@ std::error_code tryLockFile(int FD, std::chrono::milliseconds Timeout) {
       return std::error_code(Error, std::generic_category());
     usleep(1000);
   } while (std::chrono::steady_clock::now() < End);
+#endif
   return make_error_code(errc::no_lock_available);
 }
 
 std::error_code lockFile(int FD) {
+#if LLVM_ON_WASI
+  return std::error_code(EINVAL, std::generic_category());
+#else
   struct flock Lock;
   memset(&Lock, 0, sizeof(Lock));
   Lock.l_type = F_WRLCK;
@@ -1253,9 +1276,13 @@ std::error_code lockFile(int FD) {
   if (::fcntl(FD, F_SETLKW, &Lock) != -1)
     return std::error_code();
   return errnoAsErrorCode();
+#endif
 }
 
 std::error_code unlockFile(int FD) {
+#if LLVM_ON_WASI
+  return std::error_code(EINVAL, std::generic_category());
+#else
   struct flock Lock;
   Lock.l_type = F_UNLCK;
   Lock.l_whence = SEEK_SET;
@@ -1264,6 +1291,7 @@ std::error_code unlockFile(int FD) {
   if (::fcntl(FD, F_SETLK, &Lock) != -1)
     return std::error_code();
   return errnoAsErrorCode();
+#endif
 }
 
 std::error_code closeFile(file_t &F) {
@@ -1335,11 +1363,15 @@ std::error_code real_path(const Twine &path, SmallVectorImpl<char> &dest,
 }
 
 std::error_code changeFileOwnership(int FD, uint32_t Owner, uint32_t Group) {
+#if LLVM_ON_WASI
+  return std::error_code(EINVAL, std::generic_category());
+#else
   auto FChown = [&]() { return ::fchown(FD, Owner, Group); };
   // Retry if fchown call fails due to interruption.
   if ((sys::RetryAfterSignal(-1, FChown)) < 0)
     return errnoAsErrorCode();
   return std::error_code();
+#endif
 }
 
 } // end namespace fs
@@ -1349,6 +1381,7 @@ namespace path {
 bool home_directory(SmallVectorImpl<char> &result) {
   std::unique_ptr<char[]> Buf;
   char *RequestedDir = getenv("HOME");
+#if !LLVM_ON_WASI
   if (!RequestedDir) {
     long BufSize = sysconf(_SC_GETPW_R_SIZE_MAX);
     if (BufSize <= 0)
@@ -1360,6 +1393,7 @@ bool home_directory(SmallVectorImpl<char> &result) {
     if (pw && pw->pw_dir)
       RequestedDir = pw->pw_dir;
   }
+#endif
   if (!RequestedDir)
     return false;
 
